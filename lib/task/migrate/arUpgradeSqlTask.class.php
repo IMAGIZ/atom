@@ -54,6 +54,7 @@ EOF;
       new sfCommandOption('connection', null, sfCommandOption::PARAMETER_REQUIRED, 'The connection name', 'propel'),
       new sfCommandOption('no-confirmation', 'B', sfCommandOption::PARAMETER_NONE, 'Do not ask for confirmation'),
       new sfCommandOption('verbose', 'v', sfCommandOption::PARAMETER_NONE, 'Verbose mode', null),
+      new sfCommandOption('number', 'n', sfCommandOption::PARAMETER_OPTIONAL, 'Run only specific migration number(s)', null),
     ));
 
     // Disable plugin loading from plugins/ before this task.
@@ -149,88 +150,117 @@ EOF;
     // Find all the upgrade classes in lib/task/migrate
     $version = $this->initialVersion;
 
-    foreach (sfFinder::type('file')
-              ->maxdepth(0)
-              ->sort_by_name()
-              ->name('arUpgrader*.class.php')
-              ->in(sfConfig::get('sf_lib_dir').'/task/migrate') as $filename)
+    if (!empty($options['number']))
     {
-      $className = preg_replace('/.*(arUpgrader\d+).*/', '$1', $filename);
-      $class = new $className;
-
-      if ($class::INIT_VERSION > $version)
+      foreach (explode(',', $options['number']) as $number)
       {
-        continue;
-      }
-
-      try
-      {
-        if ($options['verbose'])
+        if (is_numeric($number))
         {
-          $this->logSection('upgrade-sql', sprintf('Upgrading from Release %s', $class::MILESTONE));
-        }
+          $className = sprintf('arMigration%04d', $number);
 
-        while ($class->up($version, $this->configuration, $options))
-        {
-          // Update version in database
-          $this->updateDatabaseVersion(++$version);
-        }
-      }
-      catch (Exception $e)
-      {
-        $this->logSection('upgrade-sql', sprintf('The task failed while trying to upgrade to v%s', $version + 1));
+          if (!class_exists($className))
+          {
+            $this->logSection('upgrade-sql', sprintf('Migration %d not found', $number));
 
-        throw $e;
+            continue;
+          }
+
+          $this->logSection('upgrade-sql', sprintf('Running migration %d', $number));
+
+          $class = new $className;
+
+          if (true !== $class->up($this->configuration))
+          {
+            throw new sfException(sprintf('Failed to apply upgrade %s', get_class($class)));
+          }
+        }
       }
     }
-
-    // The database version in Release 1.3 was v92. After that, AtoM was forked
-    // in two different versions: 1.x and 2.x. Both will be maintained for now.
-    // This task selectively upgrades the user to the latest database version
-    // available for its milestone. In order to keep things simpler, db upgrades
-    // won't be able to target 1.x only. Upgrades targetting only 2.x won't be
-    // applied to 1.x users until they decide to migrate to AtoM 2.x.
-    // See #4494 for more details.
-
-    // The milestone founds in the database before the upgrade happens
-    $previousMilestone = $this->getPreviousMilestone();
-
-    // Get current codebase milestone
-    $substrings = preg_split('/\./', qubitConfiguration::VERSION);
-    $currentMilestone = array_shift($substrings);
-
-    // Upgrades post to Release 1.3 (v92) are located under
-    // task/migrate/migrations and named using the following format:
-    // "arMigration%04d.class.php" (the first one is arMigration0093.class.php)
-    foreach (sfFinder::type('file')
-      ->maxdepth(0)
-      ->sort_by_name()
-      ->name('arMigration*.class.php')
-      ->in(sfConfig::get('sf_lib_dir').'/task/migrate/migrations') as $filename)
+    else
     {
-      // Initialize migration class
-      $className = preg_replace('/.*(arMigration\d+).*/', '$1', $filename);
-      $class = new $className;
-
-      // This upgrade should have been applied already
-      if ($class::VERSION <= $version)
+      foreach (sfFinder::type('file')
+                ->maxdepth(0)
+                ->sort_by_name()
+                ->name('arUpgrader*.class.php')
+                ->in(sfConfig::get('sf_lib_dir').'/task/migrate') as $filename)
       {
-        // Unless the user is moving from 1.x to 2.x
-        if (2 == $class::MIN_MILESTONE && 1 == $previousMilestone && 2 == $currentMilestone)
+        $className = preg_replace('/.*(arUpgrader\d+).*/', '$1', $filename);
+        $class = new $className;
+
+        if ($class::INIT_VERSION > $version)
         {
-          // Run migration but don't bump dbversion
-          if (true !== $class->up($this->configuration)) throw new sfException('Failed to apply upgrade '.get_class($class));
+          continue;
+        }
+
+        try
+        {
+          if ($options['verbose'])
+          {
+            $this->logSection('upgrade-sql', sprintf('Upgrading from Release %s', $class::MILESTONE));
+          }
+
+          while ($class->up($version, $this->configuration, $options))
+          {
+            // Update version in database
+            $this->updateDatabaseVersion(++$version);
+          }
+        }
+        catch (Exception $e)
+        {
+          $this->logSection('upgrade-sql', sprintf('The task failed while trying to upgrade to v%s', $version + 1));
+
+          throw $e;
         }
       }
-      // New upgrades, not applied yet
-      else
+
+      // The database version in Release 1.3 was v92. After that, AtoM was forked
+      // in two different versions: 1.x and 2.x. Both will be maintained for now.
+      // This task selectively upgrades the user to the latest database version
+      // available for its milestone. In order to keep things simpler, db upgrades
+      // won't be able to target 1.x only. Upgrades targetting only 2.x won't be
+      // applied to 1.x users until they decide to migrate to AtoM 2.x.
+      // See #4494 for more details.
+
+      // The milestone founds in the database before the upgrade happens
+      $previousMilestone = $this->getPreviousMilestone();
+
+      // Get current codebase milestone
+      $substrings = preg_split('/\./', qubitConfiguration::VERSION);
+      $currentMilestone = array_shift($substrings);
+
+      // Upgrades post to Release 1.3 (v92) are located under
+      // task/migrate/migrations and named using the following format:
+      // "arMigration%04d.class.php" (the first one is arMigration0093.class.php)
+      foreach (sfFinder::type('file')
+        ->maxdepth(0)
+        ->sort_by_name()
+        ->name('arMigration*.class.php')
+        ->in(sfConfig::get('sf_lib_dir').'/task/migrate/migrations') as $filename)
       {
-        // Apply unless we are deadling with a 1.x user staying in 1.x
-        if (1 != $previousMilestone || 1 != $currentMilestone)
+        // Initialize migration class
+        $className = preg_replace('/.*(arMigration\d+).*/', '$1', $filename);
+        $class = new $className;
+
+        // This upgrade should have been applied already
+        if ($class::VERSION <= $version)
         {
-          // Run migration
-          if (true !== $class->up($this->configuration)) throw new sfException('Failed to apply upgrade '.get_class($class));
-          $this->updateDatabaseVersion(++$version);
+          // Unless the user is moving from 1.x to 2.x
+          if (2 == $class::MIN_MILESTONE && 1 == $previousMilestone && 2 == $currentMilestone)
+          {
+            // Run migration but don't bump dbversion
+            if (true !== $class->up($this->configuration)) throw new sfException('Failed to apply upgrade '.get_class($class));
+          }
+        }
+        // New upgrades, not applied yet
+        else
+        {
+          // Apply unless we are deadling with a 1.x user staying in 1.x
+          if (1 != $previousMilestone || 1 != $currentMilestone)
+          {
+            // Run migration
+            if (true !== $class->up($this->configuration)) throw new sfException('Failed to apply upgrade '.get_class($class));
+            $this->updateDatabaseVersion(++$version);
+          }
         }
       }
     }
@@ -258,9 +288,13 @@ EOF;
     $cacheClear = new sfCacheClearTask(sfContext::getInstance()->getEventDispatcher(), new sfAnsiColorFormatter);
     $cacheClear->run();
 
-    // Store the milestone in settings, we're going to need that in further upgrades!
+    // If not running specific migrations individually, store the milestone in
+    // settings as we're going to need that in further upgrades!
     // Use case: a user running 1.x for a long period after 2.x release, then upgrades
-    $this->updateMilestone();
+    if (empty($options['number']))
+    {
+      $this->updateMilestone();
+    }
 
     // Clear settings cache to reload them in sfConfig on the first request
     // after the upgrade in QubitSettingsFilter.
