@@ -228,7 +228,9 @@ class QubitMetsParser
    */
   public function getFilesFromOriginalFileGrp()
   {
-    return $this->document->xpath('//m:mets/m:fileSec/m:fileGrp[@USE="original"]/m:file');
+    return $this->document->xpath(
+      '//m:mets/m:fileSec/m:fileGrp[@USE="original"]/m:file'
+    );
   }
 
   /**
@@ -1141,17 +1143,25 @@ class QubitMetsParser
   }
 
   /**
-   * Return a file path and name relative to the AIP root directory
+   * Return an original file path and name relative to the AIP root directory
    *
-   * The file path is parsed from a METS <fileSec><file> element
+   * The file path is parsed from a METS <fileSec><file><FLocat> element
    *
-   * @param SimpleXmlElement $file a SimpleXML file object
+   * @param string $fileId the <file @ID> attribute value
    *
    * @return string the relative file path, including file name
    */
-  protected function getFileSecFilePath($file)
+  public function getOriginalPathInAip($fileId)
   {
-    // e.g. <FLocat xlink:href="objects/pictures/Landing_zone.jpg" ... />
-    return $file->FLocat["xlink:href"];
+    foreach ($this->getFilesFromOriginalFileGrp() as $file)
+    {
+      if ($file['ID'] == $fileId)
+      {
+        // e.g. <FLocat xlink:href="objects/pictures/Landing_zone.jpg" ... />
+        return (string) $file->FLocat[0]->attributes(
+          'http://www.w3.org/1999/xlink'
+        );
+      }
+    }
   }
 }
