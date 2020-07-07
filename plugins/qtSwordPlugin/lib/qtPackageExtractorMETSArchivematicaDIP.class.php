@@ -142,6 +142,14 @@ class qtPackageExtractorMETSArchivematicaDIP extends qtPackageExtractorBase
     // Get AIP UUID from filename
     $aipUUID = $this->getUUID($this->filename);
 
+    // Don't re-add the AIP if it's already in the database
+    if (null !== $aip = QubitAip::getByUuid($aipUUID))
+    {
+      $this->aip = $aip;
+
+      return;
+    }
+
     // Create AIP
     $parts = pathinfo($this->filename);
     $aipName = substr($parts['basename'], 0, -37);
